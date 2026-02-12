@@ -15,6 +15,8 @@ Captured fields per container: snapshot_time, hostname, container_id, name,
 image, container_created_at, status, restart_count, disk_usage_bytes, etc.
 """
 
+from sqlite3 import connect
+import ssl
 import sys
 import os
 import json
@@ -181,15 +183,18 @@ class DockerMonitor:
         
         return should_monitor
 
-    def _db_connect(self):
+    def _db_connect(self, no_ssl=True):
         db_cfg = self.config['database']
-        return psycopg2.connect(
-            host=db_cfg['host'],
-            port=db_cfg['port'],
-            dbname=db_cfg['database'],
-            user=db_cfg['username'],
-            password=db_cfg['password']
-        )
+        connect_kwargs = {
+            'host': db_cfg['host'],
+            'port': db_cfg['port'],
+            'dbname': db_cfg['database'],
+            'user': db_cfg['username'],
+            'password': db_cfg['password']
+        }
+        if no_ssl:
+            connect_kwargs['sslmode'] = 'disable'
+        return psycopg2.connect(**connect_kwargs)
 
     def _run_docker_ps(self) -> List[Dict[str, Any]]:
         """Run `docker ps -a` and parse each line of JSON format."""
@@ -485,7 +490,9 @@ class DockerMonitor:
             return
 
         try:
-            conn = self._db_connect()
+            # connect with no ssl 
+            conn = self._db_connect(no_ssl=True)
+
             cur = conn.cursor()
 
             # Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE SET)
