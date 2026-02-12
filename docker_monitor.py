@@ -15,8 +15,6 @@ Captured fields per container: snapshot_time, hostname, container_id, name,
 image, container_created_at, status, restart_count, disk_usage_bytes, etc.
 """
 
-from sqlite3 import connect
-import ssl
 import sys
 import os
 import json
@@ -87,7 +85,7 @@ class DockerMonitor:
         # Container name patterns
         self.include_name_patterns: List[Pattern] = []
         self.exclude_name_patterns: List[Pattern] = []
-        
+
         # Image name patterns
         self.include_image_patterns: List[Pattern] = []
         self.exclude_image_patterns: List[Pattern] = []
@@ -107,7 +105,7 @@ class DockerMonitor:
             for pattern_str in include_names:
                 if pattern_str:  # Skip empty strings
                     self.include_name_patterns.append(re.compile(pattern_str))
-            
+
             for pattern_str in exclude_names:
                 if pattern_str:
                     self.exclude_name_patterns.append(re.compile(pattern_str))
@@ -116,7 +114,7 @@ class DockerMonitor:
             for pattern_str in include_images:
                 if pattern_str:
                     self.include_image_patterns.append(re.compile(pattern_str))
-            
+
             for pattern_str in exclude_images:
                 if pattern_str:
                     self.exclude_image_patterns.append(re.compile(pattern_str))
@@ -124,13 +122,13 @@ class DockerMonitor:
             # Log filter configuration
             total_filters = (len(self.include_name_patterns) + len(self.exclude_name_patterns) +
                            len(self.include_image_patterns) + len(self.exclude_image_patterns))
-            
+
             if total_filters == 0:
                 logging.info("No filters configured - monitoring all containers")
             else:
                 if self.include_name_patterns or self.exclude_name_patterns:
                     logging.info(f"Container name filters: {len(self.include_name_patterns)} include, {len(self.exclude_name_patterns)} exclude")
-                
+
                 if self.include_image_patterns or self.exclude_image_patterns:
                     logging.info(f"Image name filters: {len(self.include_image_patterns)} include, {len(self.exclude_image_patterns)} exclude")
 
@@ -141,7 +139,7 @@ class DockerMonitor:
     def _should_monitor_container(self, container_name: str, image_name: str) -> bool:
         """
         Determine if a container should be monitored based on regex patterns.
-        
+
         Logic:
         1. If no patterns are specified, monitor all containers
         2. Check exclude patterns first - if matched, skip container
@@ -150,7 +148,7 @@ class DockerMonitor:
         """
         has_name_filters = bool(self.include_name_patterns or self.exclude_name_patterns)
         has_image_filters = bool(self.include_image_patterns or self.exclude_image_patterns)
-        
+
         # No filters = monitor all
         if not has_name_filters and not has_image_filters:
             return True
@@ -160,7 +158,7 @@ class DockerMonitor:
             if pattern.search(container_name):
                 logging.debug(f"Container '{container_name}' excluded by name pattern: {pattern.pattern}")
                 return False
-        
+
         for pattern in self.exclude_image_patterns:
             if pattern.search(image_name):
                 logging.debug(f"Container '{container_name}' excluded by image pattern: {pattern.pattern}")
@@ -172,29 +170,26 @@ class DockerMonitor:
 
         if self.include_name_patterns:
             name_match = any(pattern.search(container_name) for pattern in self.include_name_patterns)
-        
+
         if self.include_image_patterns:
             image_match = any(pattern.search(image_name) for pattern in self.include_image_patterns)
 
         should_monitor = name_match and image_match
-        
+
         if not should_monitor:
             logging.debug(f"Container '{container_name}' ({image_name}) did not match include patterns")
-        
+
         return should_monitor
 
-    def _db_connect(self, no_ssl=True):
+    def _db_connect(self):
         db_cfg = self.config['database']
-        connect_kwargs = {
-            'host': db_cfg['host'],
-            'port': db_cfg['port'],
-            'dbname': db_cfg['database'],
-            'user': db_cfg['username'],
-            'password': db_cfg['password']
-        }
-        if no_ssl:
-            connect_kwargs['sslmode'] = 'disable'
-        return psycopg2.connect(**connect_kwargs)
+        return psycopg2.connect(
+            host=db_cfg['host'],
+            port=db_cfg['port'],
+            dbname=db_cfg['database'],
+            user=db_cfg['username'],
+            password=db_cfg['password']
+        )
 
     def _run_docker_ps(self) -> List[Dict[str, Any]]:
         """Run `docker ps -a` and parse each line of JSON format."""
@@ -252,25 +247,25 @@ class DockerMonitor:
                 check=True,
                 timeout=10
             )
-            
+
             inspect_data = json.loads(result.stdout)
             if inspect_data and len(inspect_data) > 0:
                 container_info = inspect_data[0]
-                
+
                 # Get restart count
                 restart_count = container_info.get('RestartCount', 0)
                 stats['restart_count'] = restart_count
-                
+
                 logging.debug(f"Container {container_short_id}: restart_count={restart_count}")
 
                 # Get size information if available
                 size_rw = container_info.get('SizeRw')
                 size_root_fs = container_info.get('SizeRootFs')
-                
+
                 if size_rw is not None:
                     stats['size_rw_bytes'] = size_rw
                     logging.debug(f"Container {container_short_id}: size_rw_bytes={size_rw}")
-                
+
                 if size_root_fs is not None:
                     stats['size_root_fs_bytes'] = size_root_fs
                     logging.debug(f"Container {container_short_id}: size_root_fs_bytes={size_root_fs}")
@@ -286,14 +281,14 @@ class DockerMonitor:
         # This is more reliable than docker system df
         try:
             result = subprocess.run(
-                ['docker', 'ps', '-a', '--size', '--filter', f'id={container_id}', 
+                ['docker', 'ps', '-a', '--size', '--filter', f'id={container_id}',
                  '--format', '{{.Size}}'],
                 capture_output=True,
                 text=True,
                 check=True,
                 timeout=10
             )
-            
+
             size_output = result.stdout.strip()
             if size_output:
                 # Size output format: "2B (virtual 133MB)" or "1.09kB (virtual 1.09GB)"
@@ -323,7 +318,7 @@ class DockerMonitor:
                             if virtual_bytes > 0:
                                 stats['disk_usage_bytes'] = virtual_bytes
                                 logging.debug(f"Container {container_short_id}: disk_usage_bytes={virtual_bytes} (from docker ps --size virtual)")
-                
+
         except subprocess.TimeoutExpired:
             logging.debug(f"Timeout getting size via docker ps for {container_short_id}")
         except subprocess.CalledProcessError as e:
@@ -341,7 +336,7 @@ class DockerMonitor:
         if stats['disk_usage_bytes'] == 0:
             monitor_cfg = self.config.get('docker_monitor', {})
             use_system_df = monitor_cfg.get('use_system_df_fallback', False)
-            
+
             if use_system_df:
                 try:
                     result = subprocess.run(
@@ -351,7 +346,7 @@ class DockerMonitor:
                         check=True,
                         timeout=30
                     )
-                    
+
                     # Parse the output looking for our container
                     for line in result.stdout.splitlines():
                         if container_short_id in line or container_id in line:
@@ -369,7 +364,7 @@ class DockerMonitor:
                                     except:
                                         continue
                             break
-                
+
                 except subprocess.TimeoutExpired:
                     logging.warning(f"Timeout running docker system df (consider disabling use_system_df_fallback)")
                 except subprocess.CalledProcessError:
@@ -388,12 +383,12 @@ class DockerMonitor:
         """
         if not size_str:
             return 0
-            
+
         size_str = size_str.strip().upper()
-        
+
         # Remove any parenthetical content and extra whitespace
         size_str = size_str.split('(')[0].strip()
-        
+
         # Multipliers for different units
         multipliers = {
             'B': 1,
@@ -410,7 +405,7 @@ class DockerMonitor:
             'G': 1024 ** 3,
             'T': 1024 ** 4,
         }
-        
+
         # Try each suffix
         for suffix, multiplier in multipliers.items():
             if size_str.endswith(suffix):
@@ -420,7 +415,7 @@ class DockerMonitor:
                     return int(number * multiplier)
                 except ValueError:
                     continue
-        
+
         # Try to parse as plain number (assume bytes)
         try:
             return int(float(size_str))
@@ -446,18 +441,18 @@ class DockerMonitor:
 
         snapshot: List[Dict[str, Any]] = []
         filtered_count = 0
-        
+
         for c in raw:
             container_name = c.get('Names') or ''
             image_name = c.get('Image') or ''
-            
+
             # Apply filters
             if not self._should_monitor_container(container_name, image_name):
                 filtered_count += 1
                 continue
 
             container_id = c.get('ID') or ''
-            
+
             # Get additional stats (restart count, disk usage)
             stats = self._get_container_stats(container_id)
 
@@ -476,12 +471,12 @@ class DockerMonitor:
                 'size_root_fs_bytes': stats['size_root_fs_bytes'],
             }
             snapshot.append(container)
-        
+
         if filtered_count > 0:
             logging.info(f"Filtered out {filtered_count} containers based on regex patterns")
-        
+
         logging.info(f"Collected data for {len(snapshot)} containers")
-        
+
         return snapshot
 
     def store_snapshot(self, rows: List[Dict[str, Any]]) -> None:
@@ -490,9 +485,7 @@ class DockerMonitor:
             return
 
         try:
-            # connect with no ssl 
-            conn = self._db_connect(no_ssl=True)
-
+            conn = self._db_connect()
             cur = conn.cursor()
 
             # Use UPSERT (INSERT ... ON CONFLICT ... DO UPDATE SET)
