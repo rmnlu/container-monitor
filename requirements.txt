@@ -1,4 +1,11 @@
-psycopg2-binary==2.9.10
-python-dateutil==2.9.0.post0
-PyYAML==6.0.2
-six==1.17.0
+# Python dependencies for Enhanced Docker Monitor
+# Install with: pip install -r requirements.txt
+
+# Database connectivity
+psycopg2-binary>=2.9.0
+
+# YAML configuration parsing
+PyYAML>=6.0
+
+# Date parsing utilities
+python-dateutil>=2.8.0
