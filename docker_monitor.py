@@ -80,7 +80,7 @@ class DockerMonitor:
     def _compile_filter_patterns(self) -> None:
         """Compile regex patterns for container name and image filtering."""
         monitor_cfg = self.config.get('docker_monitor', {})
-        filters = monitor_cfg.get('filters', {})
+        filters = monitor_cfg.get('filters')
 
         # Container name patterns
         self.include_name_patterns: List[Pattern] = []
@@ -90,26 +90,47 @@ class DockerMonitor:
         self.include_image_patterns: List[Pattern] = []
         self.exclude_image_patterns: List[Pattern] = []
 
+        # If filters is None or not configured, skip pattern compilation
+        if filters is None:
+            logging.info("No filters configured - monitoring all containers")
+            return
+
         try:
             # Compile name patterns
-            for pattern_str in filters.get('include_container_names', []):
-                self.include_name_patterns.append(re.compile(pattern_str))
+            include_names = filters.get('include_container_names') or []
+            exclude_names = filters.get('exclude_container_names') or []
+            include_images = filters.get('include_image_names') or []
+            exclude_images = filters.get('exclude_image_names') or []
+
+            for pattern_str in include_names:
+                if pattern_str:  # Skip empty strings
+                    self.include_name_patterns.append(re.compile(pattern_str))
             
-            for pattern_str in filters.get('exclude_container_names', []):
-                self.exclude_name_patterns.append(re.compile(pattern_str))
+            for pattern_str in exclude_names:
+                if pattern_str:
+                    self.exclude_name_patterns.append(re.compile(pattern_str))
 
             # Compile image patterns
-            for pattern_str in filters.get('include_image_names', []):
-                self.include_image_patterns.append(re.compile(pattern_str))
+            for pattern_str in include_images:
+                if pattern_str:
+                    self.include_image_patterns.append(re.compile(pattern_str))
             
-            for pattern_str in filters.get('exclude_image_names', []):
-                self.exclude_image_patterns.append(re.compile(pattern_str))
+            for pattern_str in exclude_images:
+                if pattern_str:
+                    self.exclude_image_patterns.append(re.compile(pattern_str))
 
-            if self.include_name_patterns or self.exclude_name_patterns:
-                logging.info(f"Container name filters: {len(self.include_name_patterns)} include, {len(self.exclude_name_patterns)} exclude")
+            # Log filter configuration
+            total_filters = (len(self.include_name_patterns) + len(self.exclude_name_patterns) +
+                           len(self.include_image_patterns) + len(self.exclude_image_patterns))
             
-            if self.include_image_patterns or self.exclude_image_patterns:
-                logging.info(f"Image name filters: {len(self.include_image_patterns)} include, {len(self.exclude_image_patterns)} exclude")
+            if total_filters == 0:
+                logging.info("No filters configured - monitoring all containers")
+            else:
+                if self.include_name_patterns or self.exclude_name_patterns:
+                    logging.info(f"Container name filters: {len(self.include_name_patterns)} include, {len(self.exclude_name_patterns)} exclude")
+                
+                if self.include_image_patterns or self.exclude_image_patterns:
+                    logging.info(f"Image name filters: {len(self.include_image_patterns)} include, {len(self.exclude_image_patterns)} exclude")
 
         except re.error as e:
             logging.error(f"Invalid regex pattern in config: {e}")
