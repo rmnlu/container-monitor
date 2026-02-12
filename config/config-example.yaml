@@ -17,55 +17,67 @@ docker_monitor:
   run_periodically: true
   period_seconds: 300  # Run every 5 minutes
 
-  # Container and image filtering with regex patterns
-  # If no patterns are specified, all containers are monitored
-  filters:
-    # Include patterns for container names (optional)
-    # Only containers matching at least one pattern will be monitored
-    include_container_names:
-      # - "^prod-.*"          # All containers starting with 'prod-'
-      # - ".*-api$"           # All containers ending with '-api'
-      # - "web-.*"            # All web containers
-    
-    # Exclude patterns for container names (optional)
-    # Containers matching any exclude pattern will NOT be monitored
-    exclude_container_names:
-      # - ".*-test$"          # Exclude test containers
-      # - "^temp-.*"          # Exclude temporary containers
-      # - "dev-.*"            # Exclude dev containers
-    
-    # Include patterns for image names (optional)
-    include_image_names:
-      # - "^nginx:.*"         # Only nginx images
-      # - ".*:latest$"        # Only 'latest' tagged images
-      # - "myregistry\.com/.*" # Only images from myregistry.com
-    
-    # Exclude patterns for image names (optional)
-    exclude_image_names:
-      # - ".*:alpine$"        # Exclude alpine-based images
-      # - ".*-debug"          # Exclude debug images
-      # - "scratch"           # Exclude scratch images
+  # Performance options
+  use_system_df_fallback: false  # Enable docker system df as last resort for disk usage (slow on many containers)
+
+  # Container and image filtering with regex patterns (OPTIONAL)
+  # If this entire 'filters' section is omitted or commented out, ALL containers will be monitored
+  # You can also leave the filters section present but with empty lists to monitor everything
+  
+  # Uncomment the filters section below to enable filtering:
+  
+  # filters:
+  #   # Include patterns for container names (optional)
+  #   # Only containers matching at least one pattern will be monitored
+  #   include_container_names:
+  #     # - "^prod-.*"          # All containers starting with 'prod-'
+  #     # - ".*-api$"           # All containers ending with '-api'
+  #     # - "web-.*"            # All web containers
+  #   
+  #   # Exclude patterns for container names (optional)
+  #   # Containers matching any exclude pattern will NOT be monitored
+  #   exclude_container_names:
+  #     # - ".*-test$"          # Exclude test containers
+  #     # - "^temp-.*"          # Exclude temporary containers
+  #     # - "^dev-.*"            # Exclude dev containers
+  #   
+  #   # Include patterns for image names (optional)
+  #   include_image_names:
+  #     # - "^nginx:.*"         # Only nginx images
+  #     # - ".*:latest$"        # Only 'latest' tagged images
+  #     # - "myregistry\.com/.*" # Only images from myregistry.com
+  #   
+  #   # Exclude patterns for image names (optional)
+  #   exclude_image_names:
+  #     # - ".*:alpine$"        # Exclude alpine-based images
+  #     # - ".*-debug"          # Exclude debug images
+  #     # - "scratch"           # Exclude scratch images
 
 # Example configurations:
 #
 # Monitor only production containers:
-#   include_container_names:
-#     - "^prod-.*"
+#   filters:
+#     include_container_names:
+#       - "^prod-.*"
 #
 # Monitor everything except test/dev:
-#   exclude_container_names:
-#     - ".*-test$"
-#     - "^dev-.*"
+#   filters:
+#     exclude_container_names:
+#       - ".*-test$"
+#       - "^dev-.*"
 #
 # Monitor specific apps across all environments:
-#   include_container_names:
-#     - ".*-webapp-.*"
-#     - ".*-database-.*"
+#   filters:
+#     include_container_names:
+#       - ".*-webapp-.*"
+#       - ".*-database-.*"
 #
 # Monitor only official images:
-#   include_image_names:
-#     - "^(nginx|postgres|redis|mysql):.*"
+#   filters:
+#     include_image_names:
+#       - "^(nginx|postgres|redis|mysql):.*"
 #
 # Exclude all custom images:
-#   exclude_image_names:
-#     - "^mycompany/.*"
+#   filters:
+#     exclude_image_names:
+#       - "^mycompany/.*"

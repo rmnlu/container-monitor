@@ -80,7 +80,7 @@ class DockerMonitor:
     def _compile_filter_patterns(self) -> None:
         """Compile regex patterns for container name and image filtering."""
         monitor_cfg = self.config.get('docker_monitor', {})
-        filters = monitor_cfg.get('filters', {})
+        filters = monitor_cfg.get('filters')
 
         # Container name patterns
         self.include_name_patterns: List[Pattern] = []
@@ -90,26 +90,47 @@ class DockerMonitor:
         self.include_image_patterns: List[Pattern] = []
         self.exclude_image_patterns: List[Pattern] = []
 
+        # If filters is None or not configured, skip pattern compilation
+        if filters is None:
+            logging.info("No filters configured - monitoring all containers")
+            return
+
         try:
             # Compile name patterns
-            for pattern_str in filters.get('include_container_names', []):
-                self.include_name_patterns.append(re.compile(pattern_str))
+            include_names = filters.get('include_container_names') or []
+            exclude_names = filters.get('exclude_container_names') or []
+            include_images = filters.get('include_image_names') or []
+            exclude_images = filters.get('exclude_image_names') or []
+
+            for pattern_str in include_names:
+                if pattern_str:  # Skip empty strings
+                    self.include_name_patterns.append(re.compile(pattern_str))
             
-            for pattern_str in filters.get('exclude_container_names', []):
-                self.exclude_name_patterns.append(re.compile(pattern_str))
+            for pattern_str in exclude_names:
+                if pattern_str:
+                    self.exclude_name_patterns.append(re.compile(pattern_str))
 
             # Compile image patterns
-            for pattern_str in filters.get('include_image_names', []):
-                self.include_image_patterns.append(re.compile(pattern_str))
+            for pattern_str in include_images:
+                if pattern_str:
+                    self.include_image_patterns.append(re.compile(pattern_str))
             
-            for pattern_str in filters.get('exclude_image_names', []):
-                self.exclude_image_patterns.append(re.compile(pattern_str))
+            for pattern_str in exclude_images:
+                if pattern_str:
+                    self.exclude_image_patterns.append(re.compile(pattern_str))
 
-            if self.include_name_patterns or self.exclude_name_patterns:
-                logging.info(f"Container name filters: {len(self.include_name_patterns)} include, {len(self.exclude_name_patterns)} exclude")
+            # Log filter configuration
+            total_filters = (len(self.include_name_patterns) + len(self.exclude_name_patterns) +
+                           len(self.include_image_patterns) + len(self.exclude_image_patterns))
             
-            if self.include_image_patterns or self.exclude_image_patterns:
-                logging.info(f"Image name filters: {len(self.include_image_patterns)} include, {len(self.exclude_image_patterns)} exclude")
+            if total_filters == 0:
+                logging.info("No filters configured - monitoring all containers")
+            else:
+                if self.include_name_patterns or self.exclude_name_patterns:
+                    logging.info(f"Container name filters: {len(self.include_name_patterns)} include, {len(self.exclude_name_patterns)} exclude")
+                
+                if self.include_image_patterns or self.exclude_image_patterns:
+                    logging.info(f"Image name filters: {len(self.include_image_patterns)} include, {len(self.exclude_image_patterns)} exclude")
 
         except re.error as e:
             logging.error(f"Invalid regex pattern in config: {e}")
@@ -215,14 +236,16 @@ class DockerMonitor:
             'size_root_fs_bytes': 0
         }
 
+        container_short_id = container_id[:12]
+
+        # Method 1: Get restart count and size info from docker inspect
         try:
-            # Get restart count from inspect
             result = subprocess.run(
                 ['docker', 'inspect', container_id],
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=5
+                timeout=10
             )
             
             inspect_data = json.loads(result.stdout)
@@ -232,83 +255,172 @@ class DockerMonitor:
                 # Get restart count
                 restart_count = container_info.get('RestartCount', 0)
                 stats['restart_count'] = restart_count
+                
+                logging.debug(f"Container {container_short_id}: restart_count={restart_count}")
 
                 # Get size information if available
-                size_rw = container_info.get('SizeRw', 0)
-                size_root_fs = container_info.get('SizeRootFs', 0)
+                size_rw = container_info.get('SizeRw')
+                size_root_fs = container_info.get('SizeRootFs')
                 
-                stats['size_rw_bytes'] = size_rw if size_rw else 0
-                stats['size_root_fs_bytes'] = size_root_fs if size_root_fs else 0
+                if size_rw is not None:
+                    stats['size_rw_bytes'] = size_rw
+                    logging.debug(f"Container {container_short_id}: size_rw_bytes={size_rw}")
+                
+                if size_root_fs is not None:
+                    stats['size_root_fs_bytes'] = size_root_fs
+                    logging.debug(f"Container {container_short_id}: size_root_fs_bytes={size_root_fs}")
 
         except subprocess.TimeoutExpired:
-            logging.warning(f"Timeout getting stats for container {container_id[:12]}")
+            logging.warning(f"Timeout getting inspect data for container {container_short_id}")
         except subprocess.CalledProcessError as e:
-            logging.warning(f"Failed to inspect container {container_id[:12]}: {e}")
+            logging.warning(f"Failed to inspect container {container_short_id}: {e.stderr.strip() if e.stderr else e}")
         except (json.JSONDecodeError, KeyError, IndexError) as e:
-            logging.warning(f"Failed to parse inspect data for {container_id[:12]}: {e}")
+            logging.warning(f"Failed to parse inspect data for {container_short_id}: {e}")
 
-        # Try to get disk usage using docker system df
+        # Method 2: Try docker ps with size flag to get disk usage
+        # This is more reliable than docker system df
         try:
             result = subprocess.run(
-                ['docker', 'system', 'df', '-v', '--format', '{{json .}}'],
+                ['docker', 'ps', '-a', '--size', '--filter', f'id={container_id}', 
+                 '--format', '{{.Size}}'],
                 capture_output=True,
                 text=True,
                 check=True,
                 timeout=10
             )
             
-            # Parse each line to find our container
-            for line in result.stdout.splitlines():
-                if not line.strip():
-                    continue
-                try:
-                    df_data = json.loads(line)
-                    # Check if this is a container entry matching our ID
-                    if df_data.get('Type') == 'container' and container_id.startswith(df_data.get('ID', '')[:12]):
-                        size_str = df_data.get('Size', '0B')
-                        stats['disk_usage_bytes'] = self._parse_size_string(size_str)
-                        break
-                except json.JSONDecodeError:
-                    continue
+            size_output = result.stdout.strip()
+            if size_output:
+                # Size output format: "2B (virtual 133MB)" or "1.09kB (virtual 1.09GB)"
+                # We want the first number (actual disk usage)
+                # Parse formats like: "0B", "1.5GB", "256MB (virtual 1GB)"
+                size_parts = size_output.split('(')[0].strip()
 
+                # Prefer the reported actual size if it's non-zero
+                disk_bytes = 0
+                if size_parts and size_parts != '0B':
+                    disk_bytes = self._parse_size_string(size_parts)
+                    if disk_bytes > 0:
+                        stats['disk_usage_bytes'] = disk_bytes
+                        logging.debug(f"Container {container_short_id}: disk_usage_bytes={disk_bytes} (from docker ps --size)")
+                else:
+                    # If actual size is 0B, try using the virtual size reported in parentheses
+                    if '(' in size_output:
+                        inside = size_output.split('(', 1)[1].rsplit(')', 1)[0].strip()
+                        # inside is often like 'virtual 25.7MB' or just '25.7MB'
+                        if inside.lower().startswith('virtual '):
+                            virtual_part = inside[8:].strip()
+                        else:
+                            virtual_part = inside
+
+                        if virtual_part:
+                            virtual_bytes = self._parse_size_string(virtual_part)
+                            if virtual_bytes > 0:
+                                stats['disk_usage_bytes'] = virtual_bytes
+                                logging.debug(f"Container {container_short_id}: disk_usage_bytes={virtual_bytes} (from docker ps --size virtual)")
+                
         except subprocess.TimeoutExpired:
-            logging.warning(f"Timeout getting disk usage for container {container_id[:12]}")
-        except subprocess.CalledProcessError:
-            # docker system df might not support -v flag in older versions
-            # Fall back to SizeRootFs if available
-            if stats['size_root_fs_bytes'] > 0:
-                stats['disk_usage_bytes'] = stats['size_root_fs_bytes']
+            logging.debug(f"Timeout getting size via docker ps for {container_short_id}")
+        except subprocess.CalledProcessError as e:
+            logging.debug(f"docker ps --size failed for {container_short_id}: {e.stderr.strip() if e.stderr else e}")
+        except Exception as e:
+            logging.debug(f"Error parsing size from docker ps for {container_short_id}: {e}")
+
+        # Method 3: Fallback to size_root_fs if we still don't have disk_usage
+        if stats['disk_usage_bytes'] == 0 and stats['size_root_fs_bytes'] > 0:
+            stats['disk_usage_bytes'] = stats['size_root_fs_bytes']
+            logging.debug(f"Container {container_short_id}: Using size_root_fs as disk_usage")
+
+        # Method 4: Last resort - try docker system df (slowest, but comprehensive)
+        # Only use this if we still have no data and it's enabled
+        if stats['disk_usage_bytes'] == 0:
+            monitor_cfg = self.config.get('docker_monitor', {})
+            use_system_df = monitor_cfg.get('use_system_df_fallback', False)
+            
+            if use_system_df:
+                try:
+                    result = subprocess.run(
+                        ['docker', 'system', 'df', '-v'],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        timeout=30
+                    )
+                    
+                    # Parse the output looking for our container
+                    for line in result.stdout.splitlines():
+                        if container_short_id in line or container_id in line:
+                            # Try to extract size from the line
+                            # Format varies, but usually has size like "1.5GB" somewhere
+                            parts = line.split()
+                            for part in parts:
+                                if any(part.endswith(suffix) for suffix in ['B', 'KB', 'MB', 'GB', 'TB']):
+                                    try:
+                                        size_bytes = self._parse_size_string(part)
+                                        if size_bytes > 0:
+                                            stats['disk_usage_bytes'] = size_bytes
+                                            logging.debug(f"Container {container_short_id}: disk_usage_bytes={size_bytes} (from system df)")
+                                            break
+                                    except:
+                                        continue
+                            break
+                
+                except subprocess.TimeoutExpired:
+                    logging.warning(f"Timeout running docker system df (consider disabling use_system_df_fallback)")
+                except subprocess.CalledProcessError:
+                    logging.debug(f"docker system df not available or failed")
+
+        # Log final stats for this container
+        if stats['disk_usage_bytes'] > 0 or stats['restart_count'] > 0:
+            logging.debug(f"Container {container_short_id} final stats: {stats}")
 
         return stats
 
     def _parse_size_string(self, size_str: str) -> int:
-        """Convert size string like '1.5GB' or '256MB' to bytes."""
+        """
+        Convert size string like '1.5GB' or '256MB' to bytes.
+        Handles formats from docker ps --size and docker system df.
+        """
+        if not size_str:
+            return 0
+            
         size_str = size_str.strip().upper()
         
+        # Remove any parenthetical content and extra whitespace
+        size_str = size_str.split('(')[0].strip()
+        
+        # Multipliers for different units
         multipliers = {
             'B': 1,
             'KB': 1024,
             'MB': 1024 ** 2,
             'GB': 1024 ** 3,
             'TB': 1024 ** 4,
+            'KIB': 1024,
+            'MIB': 1024 ** 2,
+            'GIB': 1024 ** 3,
+            'TIB': 1024 ** 4,
             'K': 1024,
             'M': 1024 ** 2,
             'G': 1024 ** 3,
             'T': 1024 ** 4,
         }
         
+        # Try each suffix
         for suffix, multiplier in multipliers.items():
             if size_str.endswith(suffix):
                 try:
-                    number = float(size_str[:-len(suffix)])
+                    number_str = size_str[:-len(suffix)].strip()
+                    number = float(number_str)
                     return int(number * multiplier)
                 except ValueError:
-                    return 0
+                    continue
         
-        # Try to parse as plain number
+        # Try to parse as plain number (assume bytes)
         try:
             return int(float(size_str))
         except ValueError:
+            logging.debug(f"Unable to parse size string: {size_str}")
             return 0
 
     def _parse_created_at(self, created_at_str: str) -> Optional[datetime]:
