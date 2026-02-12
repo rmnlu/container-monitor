@@ -1,5 +1,5 @@
 *env*
-config/*
+config/config.yml
 *.zip
 logs*
 nohup*
