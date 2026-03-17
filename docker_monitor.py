@@ -25,7 +25,8 @@ import logging
 import subprocess
 import re
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Pattern
+from typing import List, Dict, Any, Optional
+from re import Pattern
 
 import psycopg2
 from dateutil import parser as dateutil_parser
@@ -38,9 +39,9 @@ class DockerMonitor:
         self._setup_logging()
         self._compile_filter_patterns()
 
-    def _load_config(self, path: str) -> Dict[str, Any]:
+    def _load_config(self, path: str) -> dict[str, Any]:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 return yaml.safe_load(f)
         except FileNotFoundError:
             logging.error(f"Config file not found: {path}")
@@ -83,12 +84,12 @@ class DockerMonitor:
         filters = monitor_cfg.get('filters')
 
         # Container name patterns
-        self.include_name_patterns: List[Pattern] = []
-        self.exclude_name_patterns: List[Pattern] = []
+        self.include_name_patterns: list[Pattern] = []
+        self.exclude_name_patterns: list[Pattern] = []
 
         # Image name patterns
-        self.include_image_patterns: List[Pattern] = []
-        self.exclude_image_patterns: List[Pattern] = []
+        self.include_image_patterns: list[Pattern] = []
+        self.exclude_image_patterns: list[Pattern] = []
 
         # If filters is None or not configured, skip pattern compilation
         if filters is None:
@@ -191,7 +192,7 @@ class DockerMonitor:
             password=db_cfg['password']
         )
 
-    def _run_docker_ps(self) -> List[Dict[str, Any]]:
+    def _run_docker_ps(self) -> list[dict[str, Any]]:
         """Run `docker ps -a` and parse each line of JSON format."""
         try:
             result = subprocess.run(
@@ -211,7 +212,7 @@ class DockerMonitor:
             logging.error(f"docker ps failed: {e.stderr.strip() if e.stderr else e}")
             return []
 
-        containers: List[Dict[str, Any]] = []
+        containers: list[dict[str, Any]] = []
         for line in result.stdout.splitlines():
             line = line.strip()
             if not line:
@@ -224,7 +225,7 @@ class DockerMonitor:
                 continue
         return containers
 
-    def _get_container_stats(self, container_id: str) -> Dict[str, Any]:
+    def _get_container_stats(self, container_id: str) -> dict[str, Any]:
         """
         Get additional stats for a container using docker inspect.
         Returns restart count and disk usage.
@@ -423,7 +424,7 @@ class DockerMonitor:
             logging.debug(f"Unable to parse size string: {size_str}")
             return 0
 
-    def _parse_created_at(self, created_at_str: str) -> Optional[datetime]:
+    def _parse_created_at(self, created_at_str: str) -> datetime | None:
         if not created_at_str:
             return None
         try:
@@ -434,12 +435,12 @@ class DockerMonitor:
         except Exception:
             return None
 
-    def collect_snapshot(self) -> List[Dict[str, Any]]:
+    def collect_snapshot(self) -> list[dict[str, Any]]:
         hostname = socket.gethostname()
         snapshot_time = datetime.now(timezone.utc)
         raw = self._run_docker_ps()
 
-        snapshot: List[Dict[str, Any]] = []
+        snapshot: list[dict[str, Any]] = []
         filtered_count = 0
 
         for c in raw:
@@ -479,7 +480,7 @@ class DockerMonitor:
 
         return snapshot
 
-    def store_snapshot(self, rows: List[Dict[str, Any]]) -> None:
+    def store_snapshot(self, rows: list[dict[str, Any]]) -> None:
         if not rows:
             logging.info("No containers found; nothing to store.")
             return
