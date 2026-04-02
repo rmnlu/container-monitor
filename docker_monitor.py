@@ -33,11 +33,12 @@ from dateutil import parser as dateutil_parser
 
 
 class DockerMonitor:
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "/data/monitoring/container-monitor/config/config.yaml"):
         self.config_path = config_path
         self.config = self._load_config(config_path)
         self._setup_logging()
         self._compile_filter_patterns()
+
 
     def _load_config(self, path: str) -> dict[str, Any]:
         try:
@@ -497,7 +498,7 @@ class DockerMonitor:
                     restart_count, disk_usage_bytes, size_rw_bytes, size_root_fs_bytes
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (hostname, container_id)
+                ON CONFLICT (container_name, hostname)
                 DO UPDATE SET
                     snapshot_time = EXCLUDED.snapshot_time,
                     container_name = EXCLUDED.container_name,
